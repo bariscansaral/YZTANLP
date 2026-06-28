@@ -1,0 +1,10 @@
+textblob
+beautifulsoup4
+nltk
+scikit-learn
+pandas
+numpy
+matplotlib
+gensim
+tensorflow
+keras-preprocessing

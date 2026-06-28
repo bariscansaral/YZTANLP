@@ -1,0 +1,673 @@
+"""
+
+Bu çalışmanın amacı NLP alanında basit bir RNN tabanlı dil modeli kullanarak duygu analizi (sentiment analysis) gerçekleştirmek. Bunu yaparken sınıflandırma problemi çözeceğiz.
+
+Adımlar:
+    -Gerekli kütüphaneler içeri aktarılır ve örnek restoran yorumları veri seti oluşturulur.
+    -Metin ön işleme işlemi gerçekleştirilir. (tokenization, padding, label encoding, train test split)
+    -Word2Vec kullanılarak embedding yapılacak, sayısal vektörler oluşturulacak
+    -RNN modeli oluşturulacak (Embedding -> Simple RNN -> Dense Layer)
+    -Test seti üzerinde modelin değerlendirilmesi yapılacak
+    -Yeni cümlelerin sınıflandırılması için bir fonksiyon tanımlanacak (user test gibi)
+
+"""
+
+import numpy as np
+import pandas as pd
+
+import tensorflow as tf
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import SimpleRNN, Dense, Embedding
+from tensorflow.keras.preprocessing.text import Tokenizer
+
+from tensorflow.keras.utils import pad_sequences
+
+from gensim.models import Word2Vec #embedding
+
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import LabelEncoder
+
+
+#veriseti oluşturma, restoran yorumları ve etiketleri oluşturulacak gemini kullanacağız.
+reviews = {
+    "text": [
+        "Yemekler harikaydı, her şey taze ve lezzetliydi.",
+        "Garson çok ilgisizdi, siparişimi unuttular.",
+        "Hayatımda yediğim en iyi pizzaydı, malzeme kalitesi efsane.",
+        "Çorba buz gibi geldi, ana yemeğin de eti çok sertti.",
+        "Servis inanılmaz hızlıydı, çalışanlar çok güler yüzlü.",
+        "Fiyatlar porsiyonlara göre çok yüksek, kesinlikle değmez.",
+        "Mekanın ambiyansı ve müzikleri çok keyifli bir akşam yaşattı.",
+        "Masalar o kadar sıkışık ki yan masanın konuşmalarını dinlemek zorunda kaldık.",
+        "Tatlı menüsü çok zengin ve denediğimiz her şey mükemmeldi.",
+        "Rezervasyonumuz olmasına rağmen yarım saat masanın boşalmasını bekledik.",
+        "Temizlik ve hijyene çok dikkat ediyorlar, her yer pırıl pırıldı.",
+        "Köfteler hiç pişmemişti, içi tamamen çiğ kalmıştı.",
+        "Mezeler çok taze and orijinaldi, özellikle humus harikaydı.",
+        "Hesaba sormadan kuver ve ekstra ücretler eklemişler, hiç şık değil.",
+        "Çocuk oyun alanının olması aileler için büyük bir avantaj, çok rahat ettik.",
+        "Valenin aracı getirmesi tam 20 dakika sürdü, çıkışta çok bekledik.",
+        "Geleneksel lezzetleri modern bir sunumla harmanlamışlar, bayıldım.",
+        "Sipariş ettiğimiz içecekler asitsiz ve ılıktı, hiç memnun kalmadık.",
+        "Güler yüzlü karşılama ve uğurlama için tüm ekibe teşekkür ederiz.",
+        "Yemeklerin porsiyonları o kadar küçüktü ki masadan aç kalktık.",
+        "Deniz mahsulleri çok taze ve tam kıvamında pişirilmişti.",
+        "Mekan çok gürültülüydü, kafa dinlemek için kesinlikle uygun değil.",
+        "Fiyat/performans oranı oldukça başarılı, tekrar geleceğiz.",
+        "Menüdeki çoğu yemek o gün yoktu, seçeneklerimiz çok kısıtlandı.",
+        "Manzarası tek kelimeyle büyüleyici, kahvaltı için harika bir tercih.",
+        "Servis elemanları çok acemiydi, siparişleri sürekli karıştırdılar.",
+        "Et sote lokum gibiydi, sosun kıvamı tam yerindeydi.",
+        "Lavabolar çok kirliydi ve sabun bile kalmamıştı, yakıştıramadım.",
+        "Vegan ve vejetaryen seçeneklerin bu kadar fazla olması beni çok mutlu etti.",
+        "Yemeklerin gelmesi bir saat sürdü, açlıktan masada bayılacaktık.",
+        "Kahve kalitesi ve yanında ikram ettikleri kurabiye çok başarılıydı.",
+        "Tavuklar çok ağır kokuyordu, muhtemelen bayattı, yiyemedik.",
+        "Ev yapımı makarnaları kesinlikle denenmeli, sosu harikaydı.",
+        "Hafta sonu o kadar kalabalıktı ki hizmet kalitesi sıfıra inmişti.",
+        "Her detayı ince düşünülmüş, nezih ve kaliteli bir işletme.",
+        "Yemek çok yağlıydı, mide fesadı geçirecektik neredeyse.",
+        "Sunumlar birer sanat eseri gibiydi, yemeden önce fotoğraflarını çektik.",
+        "Garsonların tavırları çok lakayıttı, kendimizi rahatsız hissettik.",
+        "Ara sıcaklar ana yemeği aratmayacak kadar lezzetli ve doyurucuydu.",
+        "Masa örtüleri lekeliydi, temizliğe daha çok önem verilmeli.",
+        "Otopark sorunu olmaması büyük rahatlık, mekan da çok ferahtı.",
+        "Salatanın içinden yeşillikler iyi yıkanmadığı için çamur çıktı.",
+        "Şefin özel soslu antrikotu tam anlamıyla bir lezzet patlamasıydı.",
+        "Klimalar çalışmıyordu, içerisi resmen hamam gibi sıcaktı.",
+        "İkram edilen çay ve tatlı jesti için işletmeye teşekkür ederiz.",
+        "Suşi ruloları çok gevşek sarılmıştı, çubuğu vurur vurmaz dağıldı.",
+        "Geniş ve ferah bahçesinde oturmak çok keyifliydi, çok memnun kaldık.",
+        "Ekmekler bayattı ve sepetin dibinde kalmış kırıntılarla doluydu.",
+        "Mantının hamuru incecik, içi ise bol malzemeliydi, çok beğendim.",
+        "Adana kebap çok aşırı acıydı, menüde bu konuda hiçbir uyarı yoktu.",
+        "İkramlar ve ilgi çok güzeldi, kesinlikle tavsiye ederim.",
+        "Yemekler o kadar tuzluydu ki tansiyonumuz fırladı.",
+        "Waffle efsane ötesi, meyveler taptazeydi.",
+        "Hesapta yazan rakamla menüdeki fiyatlar birbirini tutmuyor.",
+        "Müşteri memnuniyetine gerçekten değer veren bir yer, tebrikler.",
+        "Sipariş ettiğimiz böreklerin içi tamamen boştu, hamur yedik.",
+        "Lahmacunları çıtır çıtır ve içi çok boldu, bayıldım.",
+        "Garsona seslenmekten yorulduk, resmen görmezden geldiler.",
+        "Bahçe düzenlemesi harika, huzur dolu bir akşam geçirdik.",
+        "Mekan çok havasızdı, içeride ağır bir kızartma kokusu vardı.",
+        "Çalışanların kibarlığı insanı gerçekten özel hissettiriyor.",
+        "Sandalye ve masalar çok eski ve rahatsız ediciydi.",
+        "Burger köftesi sulu sulu ve tam istediğim gibi az-orta pişmişti.",
+        "Köfteler yanmış kapkara gelmiş, hiç mi kontrol etmiyorsunuz?",
+        "Fiyatlar sundukları kaliteye göre son derece makul.",
+        "Çorbanın içinden kıl çıktı, iştahımız tamamen kapandı.",
+        "Köz kokulu patlıcan salatasını mutlaka denemelisiniz.",
+        "Servis çok yavaştı, içecekler yemek bittikten sonra geldi.",
+        "Mekan tasarımı çok şık ve modern, göz yormuyor.",
+        "Porsiyonlar o kadar kuşa dönmüş ki bu paraya kesinlikle değmez.",
+        "Hızlı kahvaltı tabağı hem doyurucu hem de çok çeşitliydi.",
+        "Tatlı bayatlamış, kreması ekşimiş gibi bir tadı vardı.",
+        "Tiramisunun kahve yoğunluğu ve kreması tam kıvamındaydı.",
+        "Valenin talep ettiği ücret fahiş düzeyde, tam bir soygun.",
+        "Garsonlar çok profesyonel, ne zaman ihtiyacımız olsa anında ilgilendiler.",
+        "Masamızı silmelerini rica ettik, sadece bez gezdirip bıraktılar.",
+        "Tavuklu wrap sipariş ettim, sosu ve porsiyonu harikaydı.",
+        "Gürültüden birbirimizin sesini duymakta zorlandık, başımız ağrıdı.",
+        "Deniz kenarında bu kalitede bir balık yemek harika bir deneyimdi.",
+        "Kalamar lastik gibiydi, çiğnemekten çenemiz yoruldu.",
+        "Sıcak çikolatası kış günleri için mükemmel bir tercih.",
+        "Meyve suları taze sıkma dediler ama tamamen hazır konsantre çıktı.",
+        "Masa düzeni ve temizliği on numara, güvenle yiyebilirsiniz.",
+        "Siparişimiz eksik geldi, uyardığımızda da kaba bir tavırla karşılaştık.",
+        "Menüdeki her şey ayrı bir lezzet, karar vermekte zorlandık.",
+        "WC kokusu bütün salona yayılmıştı, iğrenç bir deneyimdi.",
+        "Köri soslu tavukları inanılmaz güzel, mutlaka şans verilmeli.",
+        "Kredi kartı makinesi bozuk dediler, nakit almaya zorladılar.",
+        "Sakin ve nezih bir ortam arayanlar için biçilmiş kaftan.",
+        "Tavuk sote çok kuruydu, yutkunmakta zorlandık.",
+        "Mantarları çok iyi sotelemişler, lezzeti damağımda kaldı.",
+        "Rezervasyon yaptırmıştık ama adımızı listeye yazmayı unutmuşlar.",
+        "Güzel canlı müzik eşliğinde harika bir akşam yemeği yedik.",
+        "Pizza tabanı kömür gibi yanmıştı, altı tamamen karaydı.",
+        "Çocuklu aileler için mama sandalyesi ve özel alanlar düşünülmüş.",
+        "Klimalar direkt masaya üflüyor, donduk resmen, kapatmadılar da.",
+        "Limonataları tamamen doğal ve ev yapımı, çok ferahlatıcı.",
+        "Menü çok yetersiz, vejetaryenler için hiçbir alternatif yok.",
+        "Kuzu tandır tek kelimeyle mükemmel, kemiğinden kendi ayrılıyordu.",
+        "Ekstra ekmek istedik, hesaba fahiş bir fiyat yansıtmışlar.",
+        "Buranın suflesini yemeden restorandan ayrılmayın, tam bir şölen.",
+        "Soslar ekşimişti, muhtemelen günlerdir dışarıda bekliyordu.",
+        "Vale hizmeti çok koordineli ve hızlı çalışıyor, beğendim.",
+        "Çay istedik, yarım saat sonra buz gibi bir bardak getirdiler.",
+        "Çorbaları içimizi ısıttı, yanında gelen ekmekler de fırından yeni çıkmıştı.",
+        "Masaların üzeri toz doluydu, temizlik sıfır maalesef.",
+        "İnternet hızı iyi, çalışırken kahve içmek için de uygun bir mekan.",
+        "Patates kızartması bayat ve yağ çekmişti, hiç çıtırlığı yoktu.",
+        "Fesleğenli makarna sosu tam İtalyan usulü olmuş, çok başarılı.",
+        "Garsonların üstü başı kir içindeydi, hijyenden çok uzak bir yer.",
+        "Çanlar o kadar tatlı ki insan sadece sohbet için bile gider.",
+        "Makarnanın suyu iyi süzülmemiş, tabağın dibi su doluydu.",
+        "Yemek sonrası getirilen dondurma ikramı bizi çok mutlu etti.",
+        "Bu fiyata bu hizmet gerçekten kabul edilemez, yazık.",
+        "Mekanın aydınlatması çok loş ve dinlendirici, çok beğendim.",
+        "Ana yemek sıcak, garnitürler ise buzdolabından yeni çıkmış gibi soğuktu.",
+        "Fiyatlar bütçe dostu, bu devirde böyle yer bulmak zor.",
+        "Hamburger ekmeği bayatlıktan kırıntı şeklinde dökülüyordu.",
+        "Mercimek çorbasının kıvamı ve terbiyesi tam anne eli değmiş gibi.",
+        "Mekanda müzik sesi o kadar yüksekti ki kulaklarımız çınladı.",
+        "Masamıza bakan garson bey çok nazik ve kibardı, teşekkürler.",
+        "Girişteki karşılama çok soğuk ve kaba, insanı geldiğine pişman ediyorlar.",
+        "Deniz ürünleri tabağı çok zengindi, kalamar hiç kayış gibi değildi.",
+        "Salatadaki domatesler çürümeye yüz tutmuştu, hiç yakışmadı.",
+        "Rezervasyon sistemi tıkır tıkır işliyor, hiç mağdur olmadık.",
+        "Sipariş ettiğimiz et çok yağlı ve sinirliydi, çiğneyemedik.",
+        "Mutfak açık, her şey gözünüzün önünde hazırlanıyor, harika.",
+        "Masalar dip dibe, özel hayat diye bir şey kalmamış içeride.",
+        "Güveçte gelen kurufasulye tam bir esnaf lokantası lezzetindeydi.",
+        "Dondurma tamamen erimiş, çorba gibi kasede yüzüyordu.",
+        "İç dizaynı ve tablolar mekana çok entelektüel bir hava katmış.",
+        "Yemeklerin porsiyon boyutu çocuk menüsü kadardı, doymadık.",
+        "Milkshake çocukların favorisi oldu, porsiyonu da büyüktü.",
+        "Sürekli bir kargaşa var, garsonlar panik halinde koşturuyor.",
+        "Buranın her köşesi fotoğraf çekilmelik, çok estetik bir yer.",
+        "Masadaki tuzluk ve peçetelik pislik içindeydi.",
+        "Izgara köftenin yanındaki garnitürler bile özenle hazırlanmıştı.",
+        "İçecekler sıcak geldi, buz istedik onu da getirmeyi unuttular.",
+        "Kış bahçesi bölümü çok sıcak ve samimi bir ortama sahip.",
+        "Güveç yemeği yanmış, dibinin isi yemeğin tadına geçmişti.",
+        "Çaylar her zaman taze ve tavşan kanı, hiç bayat gelmedi.",
+        "Hizmet kalitesi her geçen gün daha da kötüye gidiyor, eski hali kalmamış.",
+        "Meze tepsisi geldiğinde gözümüz döndü, hepsi harika görünüyordu.",
+        "Fatura istedik, fiş kesmemek için bin dereden su getirdiler.",
+        "Piyasadaki birçok lüks restorandan çok daha lezzetli yemekleri var.",
+        "Köftelerin baharatı o kadar çoktu ki etin tadını hiç alamadık.",
+        "Karşılama personeli bizi kapıda çok sıcak karşıladı.",
+        "Otopark alanı var dediler ama her yer doluydu, sokakta yer aradık.",
+        "San Sebastian cheesecake bugüne kadar yediklerimin en iyisiydi.",
+        "Bir daha asla adımımı atmayacağım bir işletme, tam bir fiyasko.",
+        "İkramlar ve ilgi çok güzeldi, kesinlikle tavsiye ederim.",
+        "Yemekler o kadar tuzluydu ki tansiyonumuz fırladı.",
+        "Waffle efsane ötesi, meyveler taptazeydi.",
+        "Hesapta yazan rakamla menüdeki fiyatlar birbirini tutmuyor.",
+        "Müşteri memnuniyetine gerçekten değer veren bir yer, tebrikler.",
+        "Sipariş ettiğimiz böreklerin içi tamamen boştu, hamur yedik.",
+        "Lahmacunları çıtır çıtır ve içi çok boldu, bayıldım.",
+        "Garsona seslenmekten yorulduk, resmen görmezden geldiler.",
+        "Bahçe düzenlemesi harika, huzur dolu bir akşam geçirdik.",
+        "Mekan çok havasızdı, içeride ağır bir kızartma kokusu vardı.",
+        "Çanların kibarlığı insanı gerçekten özel hissettiriyor.",
+        "Sandalye ve masalar çok eski ve rahatsız ediciydi.",
+        "Burger köftesi sulu sulu ve tam istediğim gibi az-orta pişmişti.",
+        "Köfteler yanmış kapkara gelmiş, hiç mi kontrol etmiyorsunuz?",
+        "Fiyatlar sundukları kaliteye göre son derece makul.",
+        "Çorbanın içinden kıl çıktı, iştahımız tamamen kapandı.",
+        "Köz kokulu patlıcan salatasını mutlaka denemelisiniz.",
+        "Servis çok yavaştı, içecekler yemek bittikten sonra geldi.",
+        "Mekan tasarımı çok şık ve modern, göz yormuyor.",
+        "Porsiyonlar o kadar kuşa dönmüş ki bu paraya kesinlikle değmez.",
+        "Hızlı kahvaltı tabağı hem doyurucu hem de çok çeşitliydi.",
+        "Tatlı bayatlamış, kreması ekşimiş gibi bir tadı vardı.",
+        "Tiramisunun kahve yoğunluğu ve kreması tam kıvamındaydı.",
+        "Valenin talep ettiği ücret fahiş düzeyde, tam bir soygun.",
+        "Garsonlar çok profesyonel, ne zaman ihtiyacımız olsa anında ilgilendiler.",
+        "Masamızı silmelerini rica ettik, sadece bez gezdirip bıraktılar.",
+        "Tavuklu wrap sipariş ettim, sosu ve porsiyonu harikaydı.",
+        "Gürültüden birbirimizin sesini duymakta zorlandık, başımız ağrıdı.",
+        "Deniz kenarında bu kalitede bir balık yemek harika bir deneyimdi.",
+        "Kalamar lastik gibiydi, çiğnemekten çenemiz yoruldu.",
+        "Sıcak çikolatası kış günleri için mükemmel bir tercih.",
+        "Meyve suları taze sıkma dediler ama tamamen hazır konsantre çıktı.",
+        "Masa düzeni ve temizliği on numara, güvenle yiyebilirsiniz.",
+        "Siparişimiz eksik geldi, uyardığımızda da kaba bir tavırla karşılaştık.",
+        "Menüdeki her şey ayrı bir lezzet, karar vermekte zorlandık.",
+        "WC kokusu bütün salona yayılmıştı, iğrenç bir deneyimdi.",
+        "Köri soslu tavukları inanılmaz güzel, mutlaka şans verilmeli.",
+        "Kredi kartı makinesi bozuk dediler, nakit almaya zorladılar.",
+        "Sakin ve nezih bir ortam arayanlar için biçilmiş kaftan.",
+        "Tavuk sote çok kuruydu, yutkunmakta zorlandık.",
+        "Mantarları çok iyi sotelemişler, lezzeti damağımda kaldı.",
+        "Rezervasyon yaptırmıştık ama adımızı listeye yazmayı unutmuşlar.",
+        "Güzel canlı müzik eşliğinde harika bir akşam yemeği yedik.",
+        "Pizza tabanı kömür gibi yanmıştı, altı tamamen karaydı.",
+        "Çocuklu aileler için mama sandalyesi ve özel alanlar düşünülmüş.",
+        "Klimalar direkt masaya üflüyor, donduk resmen, kapatmadılar da.",
+        "Limonataları tamamen doğal ve ev yapımı, çok ferahlatıcı.",
+        "Menü çok yetersiz, vejetaryenler için hiçbir alternatif yok.",
+        "Kuzu tandır tek kelimeyle mükemmel, kemiğinden kendi ayrılıyordu.",
+        "Ekstra ekmek istedik, hesaba fahiş bir fiyat yansıtmışlar.",
+        "Buranın suflesini yemeden restorandan ayrılmayın, tam bir şölen.",
+        "Soslar ekşimişti, muhtemelen günlerdir dışarıda bekliyordu.",
+        "Vale hizmeti çok koordineli ve hızlı çalışıyor, beğendim.",
+        "Çay istedik, yarım saat sonra buz gibi bir bardak getirdiler.",
+        "Çorbaları içimizi ısıttı, yanında gelen ekmekler de fırından yeni çıkmıştı.",
+        "Masaların üzeri toz doluydu, temizlik sıfır maalesef.",
+        "İnternet hızı iyi, çalışırken kahve içmek için de uygun bir mekan.",
+        "Patates kızartması bayat ve yağ çekmişti, hiç çıtırlığı yoktu.",
+        "Fesleğenli makarna sosu tam İtalyan usulü olmuş, çok başarılı.",
+        "Garsonların üstü başı kir içindeydi, hijyenden çok uzak bir yer.",
+        "Çanlar o kadar tatlı ki insan sadece sohbet için bile gider.",
+        "Makarnanın suyu iyi süzülmemiş, tabağın dibi su doluydu.",
+        "Yemek sonrası getirilen dondurma ikramı bizi çok mutlu etti.",
+        "Bu fiyata bu hizmet gerçekten kabul edilemez, yazık.",
+        "Mekanın aydınlatması çok loş ve dinlendirici, çok beğendim.",
+        "Ana yemek sıcak, garnitürler ise buzdolabından yeni çıkmış gibi soğuktu.",
+        "Fiyatlar bütçe dostu, bu devirde böyle yer bulmak zor.",
+        "Hamburger ekmeği bayatlıktan kırıntı şeklinde dökülüyordu.",
+        "Mercimek çorbasının kıvamı ve terbiyesi tam anne eli değmiş gibi.",
+        "Mekanda müzik sesi o kadar yüksekti ki kulaklarımız çınladı.",
+        "Masamıza bakan garson bey çok nazik ve kibardı, teşekkürler.",
+        "Girişteki karşılama çok soğuk ve kaba, insanı geldiğine pişman ediyorlar.",
+        "Deniz ürünleri tabağı çok zengindi, kalamar hiç kayış gibi değildi.",
+        "Salatadaki domatesler çürümeye yüz tutmuştu, hiç yakışmadı.",
+        "Rezervasyon sistemi tıkır tıkır işliyor, hiç mağdur olmadık.",
+        "Sipariş ettiğimiz et çok yağlı ve sinirliydi, çiğneyemedik.",
+        "Mutfak açık, her şey gözünüzün önünde hazırlanıyor, harika.",
+        "Masalar dip dibe, özel hayat diye bir şey kalmamış içeride.",
+        "Güveçte gelen kurufasulye tam bir esnaf lokantası lezzetindeydi.",
+        "Dondurma tamamen erimiş, çorba gibi kasede yüzüyordu.",
+        "İç dizaynı ve tablolar mekana çok entelektüel bir hava katmış.",
+        "Yemeklerin porsiyon boyutu çocuk menüsü kadardı, doymadık.",
+        "Milkshake çocukların favorisi oldu, porsiyonu da büyüktü.",
+        "Sürekli bir kargaşa var, garsonlar panik halinde koşturuyor.",
+        "Buranın her köşesi fotoğraf çekilmelik, çok estetik bir yer.",
+        "Masadaki tuzluk ve peçetelik pislik içindeydi.",
+        "Izgara köftenin yanındaki garnitürler bile özenle hazırlanmıştı.",
+        "İçecekler sıcak geldi, buz istedik onu da getirmeyi unuttular.",
+        "Kış bahçesi bölümü çok sıcak ve samimi bir ortama sahip.",
+        "Güveç yemeği yanmış, dibinin isi yemeğin tadına geçmişti.",
+        "Çaylar her zaman taze ve tavşan kanı, hiç bayat gelmedi.",
+        "Hizmet kalitesi her geçen gün daha da kötüye gidiyor, eski hali kalmamış.",
+        "Meze tepsisi geldiğinde gözümüz döndü, hepsi harika görünüyordu.",
+        "Fatura istedik, fiş kesmemek için bin dereden su getirdiler.",
+        "Piyasadaki birçok lüks restorandan çok daha lezzetli yemekleri var.",
+        "Köftelerin baharatı o kadar çoktu ki etin tadını hiç alamadık.",
+        "Karşılama personeli bizi kapıda çok sıcak karşıladı.",
+        "Otopark alanı var dediler ama her yer doluydu, sokakta yer aradık.",
+        "San Sebastian cheesecake bugüne kadar yediklerimin en iyisiydi.",
+        "Bir daha asla adımımı atmayacağım bir işletme, tam bir fiyasko.",
+        "İkramlar ve ilgi çok güzeldi, kesinlikle tavsiye ederim.",
+        "Yemekler o kadar tuzluydu ki tansiyonumuz fırladı.",
+        "Waffle efsane ötesi, meyveler taptazeydi.",
+        "Hesapta yazan rakamla menüdeki fiyatlar birbirini tutmuyor.",
+        "Müşteri memnuniyetine gerçekten değer veren bir yer, tebrikler.",
+        "Sipariş ettiğimiz böreklerin içi tamamen boştu, hamur yedik.",
+        "Lahmacunları çıtır çıtır ve içi çok boldu, bayıldım.",
+        "Garsona seslenmekten yorulduk, resmen görmezden geldiler.",
+        "Bahçe düzenlemesi harika, huzur dolu bir akşam geçirdik.",
+        "Mekan çok havasızdı, içeride ağır bir kızartma kokusu vardı.",
+        "Çanların kibarlığı insanı gerçekten özel hissettiriyor.",
+        "Sandalye ve masalar çok eski ve rahatsız ediciydi.",
+        "Burger köftesi sulu sulu ve tam istediğim gibi az-orta pişmişti.",
+        "Köfteler yanmış kapkara gelmiş, hiç mi kontrol etmiyorsunuz?",
+        "Fiyatlar sundukları kaliteye göre son derece makul.",
+        "Çorbanın içinden kıl çıktı, iştahımız tamamen kapandı.",
+        "Köz kokulu patlıcan salatasını mutlaka denemelisiniz.",
+        "Servis çok yavaştı, içecekler yemek bittikten sonra geldi.",
+        "Mekan tasarımı çok şık ve modern, göz yormuyor.",
+        "Porsiyonlar o kadar kuşa dönmüş ki bu paraya kesinlikle değmez.",
+        "Hızlı kahvaltı tabağı hem doyurucu hem de çok çeşitliydi.",
+        "Tatlı bayatlamış, kreması ekşimiş gibi bir tadı vardı.",
+        "Tiramisunun kahve yoğunluğu ve kreması tam kıvamındaydı.",
+        "Valenin talep ettiği ücret fahiş düzeyde, tam bir soygun.",
+        "Garsonlar çok profesyonel, ne zaman ihtiyacımız olsa anında ilgilendiler.",
+        "Masamızı silmelerini rica ettik, sadece bez gezdirip bıraktılar.",
+        "Tavuklu wrap sipariş ettim, sosu ve porsiyonu harikaydı.",
+        "Gürültüden birbirimizin sesini duymakta zorlandık, başımız ağrıdı.",
+        "Deniz kenarında bu kalitede bir balık yemek harika bir deneyimdi.",
+        "Kalamar lastik gibiydi, çiğnemekten çenemiz yoruldu.",
+        "Sıcak çikolatası kış günleri için mükemmel bir tercih.",
+        "Meyve suları taze sıkma dediler ama tamamen hazır konsantre çıktı.",
+        "Masa düzeni ve temizliği on numara, güvenle yiyebilirsiniz.",
+        "Siparişimiz eksik geldi, uyardığımızda da kaba bir tavırla karşılaştık.",
+        "Menüdeki her şey ayrı bir lezzet, karar vermekte zorlandık.",
+        "WC kokusu bütün salona yayılmıştı, iğrenç bir deneyimdi.",
+        "Köri soslu tavukları inanılmaz güzel, mutlaka şans verilmeli.",
+        "Kredi kartı makinesi bozuk dediler, nakit almaya zorladılar.",
+        "Sakin ve nezih bir ortam arayanlar için biçilmiş kaftan.",
+        "Tavuk sote çok kuruydu, yutkunmakta zorlandık.",
+        "Mantarları çok iyi sotelemişler, lezzeti damağımda kaldı.",
+        "Rezervasyon yaptırmıştık ama adımızı listeye yazmayı unutmuşlar.",
+        "Güzel canlı müzik eşliğinde harika bir akşam yemeği yedik.",
+        "Pizza tabanı kömür gibi yanmıştı, altı tamamen karaydı.",
+        "Çocuklu aileler için mama sandalyesi ve özel alanlar düşünülmüş.",
+        "Klimalar direkt masaya üflüyor, donduk resmen, kapatmadılar da.",
+        "Limonataları tamamen doğal ve ev yapımı, çok ferahlatıcı.",
+        "Menü çok yetersiz, vejetaryenler için hiçbir alternatif yok.",
+        "Kuzu tandır tek kelimeyle mükemmel, kemiğinden kendi ayrılıyordu.",
+        "Ekstra ekmek istedik, hesaba fahiş bir fiyat yansıtmışlar.",
+        "Buranın suflesini yemeden restorandan ayrılmayın, tam bir şölen.",
+        "Soslar ekşimişti, muhtemelen günlerdir dışarıda bekliyordu.",
+        "Vale hizmeti çok koordineli ve hızlı çalışıyor, beğendim.",
+        "Çay istedik, yarım saat sonra buz gibi bir bardak getirdiler.",
+        "Çorbaları içimizi ısıttı, yanında gelen ekmekler de fırından yeni çıkmıştı.",
+        "Masaların üzeri toz doluydu, temizlik sıfır maalesef.",
+        "İnternet hızı iyi, çalışırken kahve içmek için de uygun bir mekan.",
+        "Patates kızartması bayat ve yağ çekmişti, hiç çıtırlığı yoktu.",
+        "Fesleğenli makarna sosu tam İtalyan usulü olmuş, çok başarılı.",
+        "Garsonların üstü başı kir içindeydi, hijyenden çok uzak bir yer.",
+        "Çanlar o kadar tatlı ki insan sadece sohbet için bile gider.",
+        "Makarnanın suyu iyi süzülmemiş, tabağın dibi su doluydu.",
+        "Yemek sonrası getirilen dondurma ikramı bizi çok mutlu etti.",
+        "Bu fiyata bu hizmet gerçekten kabul edilemez, yazık.",
+        "Mekanın aydınlatması çok loş ve dinlendirici, çok beğendim.",
+        "Ana yemek sıcak, garnitürler ise buzdolabından yeni çıkmış gibi soğuktu.",
+        "Fiyatlar bütçe dostu, bu devirde böyle yer bulmak zor.",
+        "Hamburger ekmeği bayatlıktan kırıntı şeklinde dökülüyordu.",
+        "Mercimek çorbasının kıvamı ve terbiyesi tam anne eli değmiş gibi.",
+        "Mekanda müzik sesi o kadar yüksekti ki kulaklarımız çınladı.",
+        "Masamıza bakan garson bey çok nazik ve kibardı, teşekkürler.",
+        "Girişteki karşılama çok soğuk ve kaba, insanı geldiğine pişman ediyorlar.",
+        "Deniz ürünleri tabağı çok zengindi, kalamar hiç kayış gibi değildi.",
+        "Salatadaki domatesler çürümeye yüz tutmuştu, hiç yakışmadı.",
+        "Rezervasyon sistemi tıkır tıkır işliyor, hiç mağdur olmadık.",
+        "Sipariş ettiğimiz et çok yağlı ve sinirliydi, çiğneyemedik.",
+        "Mutfak açık, her şey gözünüzün önünde hazırlanıyor, harika.",
+        "Masalar dip dibe, özel hayat diye bir şey kalmamış içeride.",
+        "Güveçte gelen kurufasulye tam bir esnaf lokantası lezzetindeydi.",
+        "Dondurma tamamen erimiş, çorba gibi kasede yüzüyordu.",
+        "İç dizaynı ve tablolar mekana çok entelektüel bir hava katmış.",
+        "Yemeklerin porsiyon boyutu çocuk menüsü kadardı, doymadık.",
+        "Milkshake çocukların favorisi oldu, porsiyonu da büyüktü.",
+        "Sürekli bir kargaşa var, garsonlar panik halinde koşturuyor.",
+        "Buranın her köşesi fotoğraf çekilmelik, çok estetik bir yer.",
+        "Masadaki tuzluk ve peçetelik pislik içindeydi.",
+        "Izgara köftenin yanındaki garnitürler bile özenle hazırlanmıştı.",
+        "İçecekler sıcak geldi, buz istedik onu da getirmeyi unuttular.",
+        "Kış bahçesi bölümü çok sıcak ve samimi bir ortama sahip.",
+        "Güveç yemeği yanmış, dibinin isi yemeğin tadına geçmişti.",
+        "Çaylar her zaman taze ve tavşan kanı, hiç bayat gelmedi.",
+        "Hizmet kalitesi her geçen gün daha da kötüye gidiyor, eski hali kalmamış.",
+        "Meze tepsisi geldiğinde gözümüz döndü, hepsi harika görünüyordu.",
+        "Fatura istedik, fiş kesmemek için bin dereden su getirdiler.",
+        "Piyasadaki birçok lüks restorandan çok daha lezzetli yemekleri var.",
+        "Köftelerin baharatı o kadar çoktu ki etin tadını hiç alamadık.",
+        "Karşılama personeli bizi kapıda çok sıcak karşıladı.",
+        "Otopark alanı var dediler ama her yer doluydu, sokakta yer aradık.",
+        "San Sebastian cheesecake bugüne kadar yediklerimin en iyisiydi.",
+        "Bir daha asla adımımı atmayacağım bir işletme, tam bir fiyasko.",
+        "İkramlar ve ilgi çok güzeldi, kesinlikle tavsiye ederim.",
+        "Yemekler o kadar tuzluydu ki tansiyonumuz fırladı.",
+        "Waffle efsane ötesi, meyveler taptazeydi.",
+        "Hesapta yazan rakamla menüdeki fiyatlar birbirini tutmuyor.",
+        "Müşteri memnuniyetine gerçekten değer veren bir yer, tebrikler.",
+        "Sipariş ettiğimiz böreklerin içi tamamen boştu, hamur yedik.",
+        "Lahmacunları çıtır çıtır ve içi çok boldu, bayıldım.",
+        "Garsona seslenmekten yorulduk, resmen görmezden geldiler.",
+        "Bahçe düzenlemesi harika, huzur dolu bir akşam geçirdik.",
+        "Mekan çok havasızdı, içeride ağır bir kızartma kokusu vardı.",
+        "Çanların kibarlığı insanı gerçekten özel hissettiriyor.",
+        "Sandalye ve masalar çok eski ve rahatsız ediciydi.",
+        "Burger köftesi sulu sulu ve tam istediğim gibi az-orta pişmişti.",
+        "Köfteler yanmış kapkara gelmiş, hiç mi kontrol etmiyorsunuz?",
+        "Fiyatlar sundukları kaliteye göre son derece makul.",
+        "Çorbanın içinden kıl çıktı, iştahımız tamamen kapandı.",
+        "Köz kokulu patlıcan salatasını mutlaka denemelisiniz.",
+        "Servis çok yavaştı, içecekler yemek bittikten sonra geldi.",
+        "Mekan tasarımı çok şık ve modern, göz yormuyor.",
+        "Porsiyonlar o kadar kuşa dönmüş ki bu paraya kesinlikle değmez.",
+        "Hızlı kahvaltı tabağı hem doyurucu hem de çok çeşitliydi.",
+        "Tatlı bayatlamış, kreması ekşimiş gibi bir tadı vardı.",
+        "Tiramisunun kahve yoğunluğu ve kreması tam kıvamındaydı.",
+        "Valenin talep ettiği ücret fahiş düzeyde, tam bir soygun.",
+        "Garsonlar çok profesyonel, ne zaman ihtiyacımız olsa anında ilgilendiler.",
+        "Masamızı silmelerini rica ettik, sadece bez gezdirip bıraktılar.",
+        "Tavuklu wrap sipariş ettim, sosu ve porsiyonu harikaydı.",
+        "Gürültüden birbirimizin sesini duymakta zorlandık, başımız ağrıdı.",
+        "Deniz kenarında bu kalitede bir balık yemek harika bir deneyimdi.",
+        "Kalamar lastik gibiydi, çiğnemekten çenemiz yoruldu.",
+        "Sıcak çikolatası kış günleri için mükemmel bir tercih.",
+        "Meyve suları taze sıkma dediler ama tamamen hazır konsantre çıktı.",
+        "Masa düzeni ve temizliği on numara, güvenle yiyebilirsiniz.",
+        "Siparişimiz eksik geldi, uyardığımızda da kaba bir tavırla karşılaştık.",
+        "Menüdeki her şey ayrı bir lezzet, karar vermekte zorlandık.",
+        "WC kokusu bütün salona yayılmıştı, iğrenç bir deneyimdi.",
+        "Köri soslu tavukları inanılmaz güzel, mutlaka şans verilmeli.",
+        "Kredi kartı makinesi bozuk dediler, nakit almaya zorladılar.",
+        "Sakin ve nezih bir ortam arayanlar için biçilmiş kaftan.",
+        "Tavuk sote çok kuruydu, yutkunmakta zorlandık.",
+        "Mantarları çok iyi sotelemişler, lezzeti damağımda kaldı.",
+        "Rezervasyon yaptırmıştık ama adımızı listeye yazmayı unutmuşlar.",
+        "Güzel canlı müzik eşliğinde harika bir akşam yemeği yedik.",
+        "Pizza tabanı kömür gibi yanmıştı, altı tamamen karaydı.",
+        "Çocuklu aileler için mama sandalyesi ve özel alanlar düşünülmüş.",
+        "Klimalar direkt masaya üflüyor, donduk resmen, kapatmadılar da.",
+        "Limonataları tamamen doğal ve ev yapımı, çok ferahlatıcı.",
+        "Menü çok yetersiz, vejetaryenler için hiçbir alternatif yok.",
+        "Kuzu tandır tek kelimeyle mükemmel, kemiğinden kendi ayrılıyordu.",
+        "Ekstra ekmek istedik, hesaba fahiş bir fiyat yansıtmışlar.",
+        "Buranın suflesini yemeden restorandan ayrılmayın, tam bir şölen.",
+        "Soslar ekşimişti, muhtemelen günlerdir dışarıda bekliyordu.",
+        "Vale hizmeti çok koordineli ve hızlı çalışıyor, beğendim.",
+        "Çay istedik, yarım saat sonra buz gibi bir bardak getirdiler.",
+        "Çorbaları içimizi ısıttı, yanında gelen ekmekler de fırından yeni çıkmıştı.",
+        "Masaların üzeri toz doluydu, temizlik sıfır maalesef.",
+        "İnternet hızı iyi, çalışırken kahve içmek için de uygun bir mekan.",
+        "Patates kızartması bayat ve yağ çekmişti, hiç çıtırlığı yoktu.",
+        "Fesleğenli makarna sosu tam İtalyan usulü olmuş, çok başarılı.",
+        "Garsonların üstü başı kir içindeydi, hijyenden çok uzak bir yer.",
+        "Çanlar o kadar tatlı ki insan sadece sohbet için bile gider.",
+        "Makarnanın suyu iyi süzülmemiş, tabağın dibi su doluydu.",
+        "Yemek sonrası getirilen dondurma ikramı bizi çok mutlu etti.",
+        "Bu fiyata bu hizmet gerçekten kabul edilemez, yazık.",
+        "Mekanın aydınlatması çok loş ve dinlendirici, çok beğendim.",
+        "Ana yemek sıcak, garnitürler ise buzdolabından yeni çıkmış gibi soğuktu.",
+        "Fiyatlar bütçe dostu, bu devirde böyle yer bulmak zor.",
+        "Hamburger ekmeği bayatlıktan kırıntı şeklinde dökülüyordu.",
+        "Mercimek çorbasının kıvamı ve terbiyesi tam anne eli değmiş gibi.",
+        "Mekanda müzik sesi o kadar yüksekti ki kulaklarımız çınladı.",
+        "Masamıza bakan garson bey çok nazik ve kibardı, teşekkürler.",
+        "Girişteki karşılama çok soğuk ve kaba, insanı geldiğine pişman ediyorlar.",
+        "Deniz ürünleri tabağı çok zengindi, kalamar hiç kayış gibi değildi.",
+        "Salatadaki domatesler çürümeye yüz tutmuştu, hiç yakışmadı.",
+        "Rezervasyon sistemi tıkır tıkır işliyor, hiç mağdur olmadık.",
+        "Sipariş ettiğimiz et çok yağlı ve sinirliydi, çiğneyemedik.",
+        "Mutfak açık, her şey gözünüzün önünde hazırlanıyor, harika.",
+        "Masalar dip dibe, özel hayat diye bir şey kalmamış içeride.",
+        "Güveçte gelen kurufasulye tam bir esnaf lokantası lezzetindeydi.",
+        "Dondurma tamamen erimiş, çorba gibi kasede yüzüyordu.",
+        "İç dizaynı ve tablolar mekana çok entelektüel bir hava katmış.",
+        "Yemeklerin porsiyon boyutu çocuk menüsü kadardı, doymadık.",
+        "Milkshake child'ların favorisi oldu, porsiyonu da büyüktü.",
+        "Sürekli bir kargaşa var, garsonlar panik halinde koşturuyor.",
+        "Buranın her köşesi fotoğraf çekilmelik, çok estetik bir yer.",
+        "Masadaki tuzluk ve peçetelik pislik içindeydi.",
+        "Izgara köftenin yanındaki garnitürler bile özenle hazırlanmıştı.",
+        "İçecekler sıcak geldi, buz istedik onu da getirmeyi unuttular.",
+        "Kış bahçesi bölümü çok sıcak ve samimi bir ortama sahip.",
+        "Güveç yemeği yanmış, dibinin isi yemeğin tadına geçmişti.",
+        "Çaylar her zaman taze ve tavşan kanı, hiç bayat gelmedi.",
+        "Hizmet kalitesi her geçen gün daha da kötüye gidiyor, eski hali kalmamış.",
+        "Meze tepsisi geldiğinde gözümüz döndü, hepsi harika görünüyordu.",
+        "Fatura istedik, fiş kesmemek için bin dereden su getirdiler.",
+        "Piyasadaki birçok lüks restorandan çok daha lezzetli yemekleri var.",
+        "Köftelerin baharatı o kadar çoktu ki etin tadını hiç alamadık.",
+        "Karşılama personeli bizi kapıda çok sıcak karşıladı.",
+        "Otopark alanı var dediler ama her yer doluydu, sokakta yer aradık.",
+        "San Sebastian cheesecake bugüne kadar yediklerimin en iyisiydi.",
+        "Bir daha asla adımımı atmayacağım bir işletme, tam bir fiyasko."
+    ],
+    "label": [
+        "positive", "negative", "positive", "negative", "positive",
+        "negative", "positive", "negative", "positive", "negative",
+        "positive", "negative", "positive", "negative", "positive",
+        "negative", "positive", "negative", "positive", "negative",
+        "positive", "negative", "positive", "negative", "positive",
+        "negative", "positive", "negative", "positive", "negative",
+        "positive", "negative", "positive", "negative", "positive",
+        "negative", "positive", "negative", "positive", "negative",
+        "positive", "negative", "positive", "negative", "positive",
+        "negative", "positive", "negative", "positive", "negative",
+        "positive", "negative", "positive", "negative", "positive",
+        "negative", "positive", "negative", "positive", "negative",
+        "positive", "negative", "positive", "negative", "positive",
+        "negative", "positive", "negative", "positive", "negative",
+        "positive", "negative", "positive", "negative", "positive",
+        "negative", "positive", "negative", "positive", "negative",
+        "positive", "negative", "positive", "negative", "positive",
+        "negative", "positive", "negative", "positive", "negative",
+        "positive", "negative", "positive", "negative", "positive",
+        "negative", "positive", "negative", "positive", "negative",
+        "positive", "negative", "positive", "negative", "positive",
+        "negative", "positive", "negative", "positive", "negative",
+        "positive", "negative", "positive", "negative", "positive",
+        "negative", "positive", "negative", "positive", "negative",
+        "positive", "negative", "positive", "negative", "positive",
+        "negative", "positive", "negative", "positive", "negative",
+        "positive", "negative", "positive", "negative", "positive",
+        "negative", "positive", "negative", "positive", "negative",
+        "positive", "negative", "positive", "negative", "positive",
+        "negative", "positive", "negative", "positive", "negative",
+        "positive", "negative", "positive", "negative", "positive",
+        "negative", "positive", "negative", "positive", "negative",
+        "positive", "negative", "positive", "negative", "positive",
+        "negative", "positive", "negative", "positive", "negative",
+        "positive", "negative", "positive", "negative", "positive",
+        "negative", "positive", "negative", "positive", "negative",
+        "positive", "negative", "positive", "negative", "positive",
+        "negative", "positive", "negative", "positive", "negative",
+        "positive", "negative", "positive", "negative", "positive",
+        "negative", "positive", "negative", "positive", "negative",
+        "positive", "negative", "positive", "negative", "positive",
+        "negative", "positive", "negative", "positive", "negative",
+        "positive", "negative", "positive", "negative", "positive",
+        "negative", "positive", "negative", "positive", "negative",
+        "positive", "negative", "positive", "negative", "positive",
+        "negative", "positive", "negative", "positive", "negative",
+        "positive", "negative", "positive", "negative", "positive",
+        "negative", "positive", "negative", "positive", "negative",
+        "positive", "negative", "positive", "negative", "positive",
+        "negative", "positive", "negative", "positive", "negative",
+        "positive", "negative", "positive", "negative", "positive",
+        "negative", "positive", "negative", "positive", "negative",
+        "positive", "negative", "positive", "negative", "positive",
+        "negative", "positive", "negative", "positive", "negative",
+        "positive", "negative", "positive", "negative", "positive",
+        "negative", "positive", "negative", "positive", "negative",
+        "positive", "negative", "positive", "negative", "positive",
+        "negative", "positive", "negative", "positive", "negative",
+        "positive", "negative", "positive", "negative", "positive",
+        "negative", "positive", "negative", "positive", "negative",
+        "positive", "negative", "positive", "negative", "positive",
+        "negative", "positive", "negative", "positive", "negative",
+        "positive", "negative", "positive", "negative", "positive",
+        "negative", "positive", "negative", "positive", "negative",
+        "positive", "negative", "positive", "negative", "positive",
+        "negative", "positive", "negative", "positive", "negative",
+        "positive", "negative", "positive", "negative", "positive",
+        "negative", "positive", "negative", "positive", "negative",
+        "positive", "negative", "positive", "negative", "positive",
+        "negative", "positive", "negative", "positive", "negative",
+        "positive", "negative", "positive", "negative", "positive",
+        "negative", "positive", "negative", "positive", "negative",
+        "positive", "negative", "positive", "negative", "positive",
+        "negative", "positive", "negative", "positive", "negative",
+        "positive", "negative", "positive", "negative", "positive",
+        "negative", "positive", "negative", "positive", "negative",
+        "positive", "negative", "positive", "negative", "positive",
+        "negative", "positive", "negative", "positive", "negative",
+        "positive", "negative", "positive", "negative", "positive",
+        "negative", "positive", "negative", "positive", "negative",
+        "positive", "negative", "positive", "negative", "positive",
+        "negative", "positive", "negative", "positive", "negative",
+        "positive", "negative", "positive", "negative", "positive",
+        "negative", "positive", "negative", "positive", "negative",
+        "positive", "negative", "positive", "negative", "positive",
+        "negative", "positive", "negative", "positive", "negative",
+        "positive", "negative", "positive", "negative", "positive",
+        "negative", "positive", "negative", "positive", "negative",
+        "positive", "negative", "positive", "negative", "positive",
+        "negative", "positive", "negative", "positive", "negative"
+    ]
+}
+
+#incelemeleri df'e çevirme
+
+df=pd.DataFrame(data=reviews)
+print(df.head())
+
+#metin ön işleme, data preprocessing
+
+tokenizer=Tokenizer() #kelimeleri sayısal indekslere çeviren yapı
+tokenizer.fit_on_texts(df['text']) #kelime sözlüğünü oluşturacak (vocab)
+text_sequences=tokenizer.texts_to_sequences(df['text']) #yorumları sayı dizisine çevirecek
+word_index=tokenizer.word_index #sözlük: kelime->index
+print(word_index)
+
+#padding işlemi (Neural Networkte sabit bir input size olduğu için padding yaparak maksimum bir cümle uzunluğu belirliyoruz belirlenenden uzunsa cümle ikiye bölünüyo vs.)
+#max_padding uzunluğu 3 olsun.
+
+max_sequence_length=max(len(seq) for seq in text_sequences)
+print("Max Sequence Length: ", max_sequence_length)
+X=pad_sequences(sequences=text_sequences, maxlen=max_sequence_length) #tüm cümleleri aynı uzunluğa getirir eksik kısımları 0 ile doldurur.
+print(f"Giriş verisinin boyutu : {X.shape}") #Toplam 50 verim vardı bunların boyutu artık 50,12
+print(X)
+
+
+#Label Encoding
+label_encoder=LabelEncoder()
+y=label_encoder.fit_transform(df['label']) #pozitifleri 1 negatifleri 0 ile değişip encode ediyoruz.
+
+
+#Train test split
+X_train,X_test,y_train,y_test=train_test_split(X,y,test_size=0.2,random_state=42)
+
+#Embedding
+sentences=[text.split() for text in df['text']]
+
+#word2vec modelinin eğitimi
+word2vec_model=Word2Vec(sentences,vector_size=50,window=5,min_count=1)
+embedding_dim=50 #embedding dimension, her kelime 50 boyutlu vektör ile temsil edilir.
+
+
+#embedding matrisi oluşturma
+embedding_matrix=np.zeros((len(word_index)+1,embedding_dim))
+for word, idx in word_index.items():
+    if word in word2vec_model.wv:
+        embedding_matrix[idx]=word2vec_model.wv[word]
+print("Anlamsız olsa da embedding matriximiz:\n ",embedding_matrix)
+
+
+#model oluşturma
+model=Sequential()
+
+#embedding katmanı oluşturma
+model.add(Embedding(input_dim=len(word_index) + 1, #kelime sayısı + 1
+                    output_dim=embedding_dim, #embedding boyutu
+                    weights=[embedding_matrix], #önceden eğitilmiş word2vec embedding matrisi
+                    input_length=max_sequence_length, #cümlelerin uzunluğu
+                    trainable=False)) #embedding ağırlıkları sabit kalacak üstte zaten embedding yapmıştık ilerde üstteki olmadan burayala da yapacakmışız.
+
+#RNN Katmanı
+model.add(SimpleRNN(units=50, #Gizli katman sayısı
+                    return_sequences=False)) #sadece son çıktıyı return etme
+
+#output katmanı
+model.add(Dense(1,activation='sigmoid'))
+
+
+#Compile işlemi, yani modelin optimizer aralığı loss fonksiyonunu ve vect train tanımlama
+model.compile(optimizer="adam", loss="binary_crossentropy", metrics=["accuracy"])
+
+#train işlemi
+model.fit(X_train,y_train,
+          epochs=10, #eğitim tekrar sayısı
+          batch_size=2, #batch boyutu
+          validation_data=(X_test,y_test) #test seti ile doğrulama
+          )
+
+#Değerlendirme
+test_loss, test_accuracy = model.evaluate(X_test, y_test)
+print(f"Test loss: {test_loss} \nTest Accuracy: {test_accuracy}")
+
+
+#Yeni cümlelerin sınıflandırılması için fonksiyon
+def classify_sentences(sentence):
+    """
+    Yeni cümleyi alır işleme sokar ve model ile sınıflandırmaya çalışır
+    """
+    seq=tokenizer.texts_to_sequences([sentence]) #cümleyi sayısal dizilere çevirir
+    padded_seq=pad_sequences(sequences=seq, maxlen=max_sequence_length) #uzunluğu normalize eder
+    prediction=model.predict(padded_seq)  #modelden olasılık olur
+    predicted_class=(prediction>0.5).astype(int) #0.5 üstü pozitif olarak etiketlenecek
+    label="positive" if predicted_class[0][0]== 1 else "negative"
+    return label
+
+new_sentence="Restoran çok temizdi ve yemekler çok güzeldi"
+result=classify_sentences(new_sentence)
+print("Yeni cümlenin sonucu: ",result)
