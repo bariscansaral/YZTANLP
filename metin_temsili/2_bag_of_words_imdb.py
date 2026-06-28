@@ -30,7 +30,7 @@ def clean_text(text):
     #Rakamları kaldırma
     text=re.sub(r"\d+","",text)
     #Özel karakterleri kaldırma
-    text=re.sub(r"[^\w\s]","",text)
+        text=re.sub(r"[^\w\s]","",text)
     #Çok kısa kelimeleri (2 harften kısa) silme
     text=" ".join([word for word in text.split() if len(word)>2])
     #stopwordleri çıkarmak

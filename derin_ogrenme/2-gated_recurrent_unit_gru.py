@@ -68,7 +68,7 @@ model = Sequential([
 """
 
 
-# Modelin derlenmesi
+# Modelin derlenmesi, binary_crossentropy kullanılmasının sebebi pozitif ve negatif olmak üzere 2 çıktı olması
 model.compile(loss='binary_crossentropy', optimizer='adam', metrics=['accuracy'])
 model.summary()
 
